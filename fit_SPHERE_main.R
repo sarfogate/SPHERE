@@ -1,191 +1,292 @@
+## =============================================================================================
+
 #' Fit the SPHERE Model for Spatial Transcriptomics Data
 #'
-#' This function fits the SPHERE (A Spatial Poisson Hierarchical modEl with pathway-infoRmed gEne networks) 
-#' using a Bayesian framework implemented in Stan.
+#' Fits the SPHERE (Spatial Poisson Hierarchical modEl with pathway-infoRmed
+#' gEne networks) model using a Bayesian framework implemented in Stan. The
+#' model identifies spatially variable genes (SVGs) by combining a Poisson
+#' log-normal likelihood, low-rank Gaussian Process spatial effects, and
+#' pathway-informed Conditional Autoregressive (CAR) priors.
 #'
-#' @param data_mat A numeric matrix (n x p) of gene expression counts,
-#'   where n is the number of spatial locations (spots) and p is the number of genes.
-#' @param spot A numeric matrix (n x d) of spatial coordinates for each spot.
-#' @param pathway_df A data frame containing gene-to-pathway mappings.
-#'   Must include a column named `Pathway`.
-#' @param stan_model_path Path to the Stan model file.
-#' @param iter_sampling Number of post-warmup iterations (default: 2000).
-#' @param iter_warmup Number of warmup iterations (default: 1000).
-#' @param chains Number of MCMC chains (default: 1).
-#' @param seed Random seed for reproducibility (default: 8).
+#' @param data_mat A numeric matrix (\eqn{n \times p}) of gene expression
+#'   counts, where \eqn{n} is the number of spatial spots and \eqn{p} is the
+#'   number of genes. Non-integer values are rounded.
+#' @param spot A numeric matrix (\eqn{n \times d}) of spatial coordinates for
+#'   each spot (typically \eqn{d = 2} for x-y coordinates).
+#' @param gene_group A character or factor vector of length \eqn{p} giving the
+#'   pathway (group) membership for each gene.
+#' @param stan_model_path Character string. Path to the compiled Stan model
+#'   file (\code{.stan}).
+#' @param iter_sampling Integer. Number of post-warmup sampling iterations per
+#'   chain (default: 2000).
+#' @param iter_warmup Integer. Number of warmup (burn-in) iterations per chain
+#'   (default: 1000).
+#' @param chains Integer. Number of MCMC chains (default: 3).
+#' @param seed Integer. Random seed for reproducibility (default: 8).
+#' @param knots Integer. Number of knots (inducing points) for the low-rank GP
+#'   approximation (default: 30).
+#' @param alpha Numeric vector of length 2. Dirichlet concentration parameters
+#'   for the mixture weights (default: \code{c(10, 3)}). The first element
+#'   corresponds to the non-spatially-variable component.
+#' @param refresh Integer. Print progress every \code{refresh} iterations
+#'   (default: 100). Set to 0 to suppress output.
 #'
-#' @return A list containing:
+#' @return A named list with the following elements:
 #' \describe{
-#'   \item{fit}{CmdStanMCMC object}
-#'   \item{summary}{Posterior summary statistics}
-#'   \item{runtime}{Elapsed time (seconds)}
-#'   \item{draws}{Posterior draws (selected parameters)}
+#'   \item{fit}{The \code{\link[cmdstanr]{CmdStanMCMC}} object containing the
+#'     full posterior samples.}
+#'   \item{summary}{A data frame of posterior summary statistics for key
+#'     parameters (mean, median, sd, 95\% credible intervals, convergence
+#'     diagnostics).}
+#'   \item{draws}{A \code{draws_array} object from the \pkg{posterior} package
+#'     containing all posterior draws.}
+#'   \item{stan_data}{The list of data passed to Stan (useful for
+#'     reproducibility and diagnostics).}
+#'   \item{runtime}{Numeric. Total elapsed wall-clock time in seconds.}
 #' }
 #'
 #' @details
-#' The model:
-#' \itemize{
-#'   \item Uses a Poisson likelihood for count data
-#'   \item Incorporates spatial dependence via Gaussian processes
-#'   \item Models gene relationships using pathway-informed CAR priors
+#' The SPHERE model has three main components:
+#' \enumerate{
+#'   \item \strong{Observation model:} Counts follow a Poisson distribution
+#'     with log-rates modeled as latent variables, offset by per-spot library
+#'     size.
+#'   \item \strong{Spatial structure:} A low-rank Radial Basis Function (RBF)
+#'     Gaussian Process captures spatial expression patterns using \code{knots}
+#'     inducing points.
+#'   \item \strong{Gene classification:} A two-component mixture model with a
+#'     gene-level indicator \eqn{Z_j} classifies each gene as spatially
+#'     variable (SE) or non-spatially variable (non-SE). Pathway information
+#'     is incorporated via a CAR prior on gene-level effects \eqn{\beta_j}.
 #' }
+#'
+#' The posterior probability of spatial variability for gene \eqn{j} is
+#' estimated as the fraction of posterior samples where \eqn{Z_j = 2}.
+#'
+#' @seealso \code{\link{make_rbf_basis}}, \code{\link{make_rbf_dist}}
 #'
 #' @examples
 #' \dontrun{
 #' result <- fit_sphere(
-#'   data_mat = counts,
-#'   spot = coordinates,
-#'   pathway_df = pathway_data,
-#'   stan_model_path = "model_w_fullCAR.stan"
+#'   data_mat = counts_matrix,
+#'   spot = coord_matrix,
+#'   gene_group = pathway_labels,
+#'   stan_model_path = system.file("stan", "SPHERE.stan", package = "SPHERE"),
+#'   knots = 50,
+#'   chains = 4
 #' )
+#'
+#' # Posterior probability of each gene being spatially variable
+#' z_summary <- result$summary[grep("^Z\\[", result$summary$variable), ]
 #' }
 #'
+#' @importFrom cmdstanr cmdstan_model
+#' @importFrom posterior default_summary_measures default_convergence_measures
+#'   quantile2
+#' @importFrom stats dist median rnorm runif
+#' @importFrom gtools rdirichlet
 #' @export
-fit_sphere <- function(data_mat, spot, pathway_df, stan_model_path, 
-                       iter_sampling = 5000, iter_warmup = 2000,
-                       chains = 3, gene_group, seed = 8, knots = 30) {
-  
-  # ----------------------------
-  # 1. Data
-  # ----------------------------
-  data_mat <- round(as.matrix(data_mat))           # Ensure input data is a numeric matrix of counts (Poisson requires integers)
+#' 
+#' 
+## =============================================================================================
 
-  # ----------------------------
+fit_sphere <- function(data_mat, spot, gene_group, stan_model_path, chains = 3, 
+                       iter_sampling = 2000,  iter_warmup = 1000, knots = 30,
+                       seed = 8, alpha = c(10, 3), refresh = 100) {
+  
+  # ------------------------------------------------------------------
+  # 1. Input validation
+  # ------------------------------------------------------------------
+  if (!is.matrix(data_mat) && !is.data.frame(data_mat)) {
+    stop("`data_mat` must be a matrix or data frame.", call. = FALSE)
+  }
+  data_mat <- round(as.matrix(data_mat))
+  
+  if (!is.matrix(spot) && !is.data.frame(spot)) {
+    stop("`spot` must be a matrix or data frame of spatial coordinates.",
+         call. = FALSE)
+  }
+  spot <- as.matrix(spot)
+  
+  if (nrow(data_mat) != nrow(spot)) {
+    stop("Number of rows in `data_mat` (", nrow(data_mat),
+         ") must match number of rows in `spot` (", nrow(spot), ").",
+         call. = FALSE)
+  }
+  
+  if (any(data_mat < 0)) {
+    stop("`data_mat` must contain non-negative counts.", call. = FALSE)
+  }
+  
+  # ------------------------------------------------------------------
   # 2. Extract dimensions
-  # ----------------------------
-  n <- nrow(data_mat)                               # n = number of spatial locations (spots)
-  p <- ncol(data_mat)                               # p = number of genes
-  G <- length(unique(gene_group))                   # G = number of unique biological pathways
-  gene_grp <- as.integer(factor(gene_group))        # Convert pathway labels into integer indices for Stan
+  # ------------------------------------------------------------------
+  n <- nrow(data_mat)
+  p <- ncol(data_mat)
+  
+  gene_grp <- as.integer(factor(gene_group))
+  G <- length(unique(gene_grp))
   
   if (length(gene_grp) != p) {
-    stop("gene_group must have length equal to number of genes (columns of data_mat).")
+    stop("`gene_group` must have length equal to the number of genes (",
+         p, "), but has length ", length(gene_grp), ".", call. = FALSE)
   }
   
-  if (max(gene_grp) > G) {
-    stop("gene_group contains values larger than G.")
+  if (knots >= n) {
+    warning("Number of knots (", knots, ") >= number of spots (", n,
+            "). Setting knots to n/2.", call. = FALSE)
+    knots <- max(floor(n / 2), 1L)
   }
   
-  # ----------------------------
-  # 3. Construct model inputs
-  # ----------------------------
+  # ------------------------------------------------------------------
+  # 3. Normalization and spatial distances
+  # ------------------------------------------------------------------
+  N_i <- rowSums(data_mat)
   
-  # Compute normalization factor N_i: total counts per spot replicated across genes
-  N_i <- apply(data_mat, 1, sum)
-  # Compute squared Euclidean distance matrix between spatial locations
+  if (any(N_i == 0)) {
+    stop("Some spots have zero total counts. Remove empty spots before ", "fitting.", call. = FALSE)
+  }
   dist_sq <- as.matrix(dist(spot))^2
   
-  # ----------------------------
+  # ------------------------------------------------------------------
   # 4. Low-rank GP basis construction
-  # ----------------------------
+  # ------------------------------------------------------------------
+  D   <- make_rbf_dist(spot, r = knots)
+  Phi <- make_rbf_basis(spot, r = knots, lengthscale = NULL)
+  r   <- knots
   
-  # Construct distance matrix from spots to RBF knots
-  D <- make_rbf_dist(spot, r = knots)           # D[i,b] = squared distance from spot i to knot b
-  med_D <- median(D)                            # Median distance (can be useful for diagnostics / scaling)
-  # Construct RBF basis matrix
-  Phi <- make_rbf_basis(spot, r = knots, lengthscale = NULL)   # Phi[i,b] = basis function linking spot i to knot b
-  r <- knots                                    # Number of basis functions (knots)
+  # ------------------------------------------------------------------
+  # 5. Assemble Stan data list
+  # ------------------------------------------------------------------
   
-  # Assemble data list to pass into Stan model
   stan_data <- list(
     P = p,                                            # number of genes
     N = n,                                            # number of spatial locations
     Y = data_mat,                                     # observed count data
     dist_sq = dist_sq,                                # spatial distance matrix
-    alpha = c(10, 3),                                 # Dirichlet prior for mixture weights
+    alpha = alpha,                                    # Hyperparameters: Dirichlet for mixture weights
     N_i = as.vector(N_i),                             # normalization/exposure term
-    
     # Hyperparameters for priors
-    a_err = 0, b_err = 1,                             # half-normal prior for noise sd
-    a_gsl = 0, b_gsl = 3,                             # lognormal prior for GP length-scale
-    a_gs  = 0, b_gs  = 12,                            # half-normal prior for GP variance
-    a_rho = 2, b_rho = 2,                             # beta prior for CAR correlation
-    a_tau_beta = 1, b_tau_beta = 1,                   # gamma prior for CAR precision
-    
+    a_err = 0, b_err = 1,                             # Hyperparameters: observation noise (half-normal)
+    a_gsl = 0, b_gsl = 3,                             # Hyperparameters: GP lengthscale (log-normal)
+    a_gs  = 0, b_gs  = 12,                            # Hyperparameters: GP amplitude (half-normal)
+    a_rho = 2, b_rho = 2,                             # Hyperparameters: CAR correlation (beta)
+    a_tau_beta = 1, b_tau_beta = 1,                   # Hyperparameters: CAR precision (half-normal)
     # Pathway structure
     G = G,                                            # number of pathways
     gene_group = gene_grp,                            # pathway membership per gene
-    
     # Low-rank GP inputs
     r = r,
     D = D,
     Phi = Phi
   )
   
-  # ----------------------------
-  # 4. Initial values for MCMC
-  # ----------------------------
+  # ------------------------------------------------------------------
+  # 6. Initial values for MCMC
+  # ------------------------------------------------------------------
+  
   init_fun <- function() {
     list(
-      sig_eta_gs = rep(10, p),                        # Gene-specific GP variance parameters
-      ell_gs = rep(2, p),                             # Gene-specific length-scale parameters
+      mu0 = 1,                                        # Global intercept
       pii = replicate(                                # Mixture probabilities (Dirichlet initialized)
         p, as.numeric(gtools::rdirichlet(1, c(8, 2))), simplify = FALSE),
+      loglambda = matrix(0.5, n, p),                  # Log-intensity (Poisson mean parameter)
       sigma_sd = rep(1, p),                           # Observation noise standard deviation
+      sig_eta_gs = rep(10, p),                        # Gene-specific GP variance parameters
+      ell_gs = rep(2, p),                             # Gene-specific length-scale parameters
+      w = matrix(rnorm(r * p), r, p),                 # GP weights (r x p matrix)
       Beta = rep(1, p),                               # CAR regression coefficients
       rho = runif(1, 0.1, 1),                         # Spatial correlation parameter
-      sigma_beta = runif(1, 0.1, 1),                  # CAR precision parameter
-      mu0 = 1,                                        # Global intercept
-      loglambda = matrix(0.5, n, p),                  # Log-intensity (Poisson mean parameter)
-      w = matrix(rnorm(r * p), r, p),                 # GP weights (r x p matrix)
+      sigma_beta = runif(1, 0.1, 1)                   # CAR precision parameter
     )
-  }
+  }  
   
-  # ----------------------------
-  # 5. Compile and fit model
-  # ----------------------------
-  
+  # ------------------------------------------------------------------
+  # 7. Compile and fit model
+  # ------------------------------------------------------------------
+
   # Compile Stan model from file
   model <- cmdstanr::cmdstan_model(stan_model_path)
   
   # Start timing model fitting
   t_start <- proc.time()[3]
   
-  # Run MCMC sampling
+  # Run MCMC sampling  
   fit <- model$sample(
-    data = stan_data,                                # input data
-    chains = chains,                                 # number of chains
-    parallel_chains = chains,                        # parallel execution
-    iter_warmup = iter_warmup,                       # burn-in iterations
-    iter_sampling = iter_sampling,                   # posterior samples
-    seed = seed,                                     # reproducibility
-    init = init_fun,                                 # initialization function
-    refresh = 100                                    # print progress every 100 iterations
+    data            = stan_data,
+    chains          = chains,
+    parallel_chains = chains,
+    iter_warmup     = iter_warmup,
+    iter_sampling   = iter_sampling,
+    seed            = seed,
+    init            = init_fun,
+    refresh         = refresh
   )
   
-  # Compute total runtime
+  # Compute total runtime  
   runtime <- proc.time()[3] - t_start
   
-  # ----------------------------
-  # 6. Posterior summaries
-  # ----------------------------
+  message("SPHERE model fitting completed in ", round(runtime, 1), " seconds.")
   
-  # Extract summary statistics for key model parameters
+  # ------------------------------------------------------------------
+  # 8. Posterior summaries
+  # ------------------------------------------------------------------
+  
+  # Extract summary statistics for key model parameters  
   summary <- fit$summary(
-    variables = c("pii", "Z", "rho", "sig_eta_gs", "Beta", "mu0","sigma_beta", "ell_gs"),
+    variables = c("pii", "Z", "rho", "sig_eta_gs",
+                  "Beta", "mu0", "sigma_beta", "ell_gs"),
     posterior::default_summary_measures()[1:3],
-    quantiles = ~ quantile2(., probs = c(0.025, 0.975)),
+    quantiles = ~ posterior::quantile2(., probs = c(0.025, 0.975)),
     posterior::default_convergence_measures()
-  )    
+  )
   
-  
-  ##-----------------------------------------------
-  ## Extract posterior draws
-  ##-----------------------------------------------
-  
+  # Extract posterior draws
   draws_array <- fit$draws()
   
-  # ----------------------------
-  # 8. Return results
-  # ----------------------------
-  
-  return(list(
-    fit = fit,                                     # full CmdStan object
-    summary = summary,                             # posterior summaries
-    draws = draws_array,                           # selected posterior samples
-    stan_data = stan_data,                         # stan data 
-    runtime = runtime))                            # computation time    
+  # ------------------------------------------------------------------
+  # 9. Return results
+  # ------------------------------------------------------------------
+  structure(
+    list(
+      fit = fit,                                     # full CmdStan object
+      summary = summary,                             # posterior summaries
+      draws = draws_array,                           # selected posterior samples
+      stan_data = stan_data,                         # stan data 
+      runtime = runtime                              # computation time    
+    ),
+    class = "sphere_fit"
+  )
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

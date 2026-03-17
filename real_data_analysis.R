@@ -1,11 +1,24 @@
 
+## data include(original data, spot, entrezID, pathway matrix, path df & modified data genes with at least 1 pathway)
+
+load("humanBC_dataset.RData") ## Human breast cancer
+load("BrC_New_set.RData") ## Human breast cancer trimed data 
+
+
+## Data for analysis
+
+data_mat <- round(BrC_final)
+gen_path <- BrC_path_sin
+spot     <- BrC_spot
+
+
+pathway_df <- pathway_df
 na_idx <- which(is.na(pathway_df$Pathway))       # Identify genes with missing pathway annotations
 
 # If missing pathways exist, assign them into 3 artificial groups (p1, p2, p3)
 if (length(na_idx) > 0) {     
   groups <- split(            # This prevents loss of genes and allows them to be included in CAR structure
-    na_idx,
-    cut(seq_along(na_idx), 3, labels = c("p1","p2","p3"))
+    na_idx,  cut(seq_along(na_idx), 3, labels = c("p1","p2","p3"))
   )
   
   # Replace NA pathway labels with artificial group labels
@@ -13,13 +26,13 @@ if (length(na_idx) > 0) {
     pathway_df$Pathway[groups[[g]]] <- g
   }
 }
-
-
-
-
-
 # Filter pathways based on size/criteria (user-defined helper function)
 gen_path <- filter_pathways_by_limit(pathway_df)
+
+
+
+## Extract the data dimensions
+
 
 
 
