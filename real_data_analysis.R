@@ -15,9 +15,11 @@
 # 0. Load required packages
 # ----------------------------------------
 
-library(SPHERE)
-library(cmdstanr)
-library(posterior)
+if (!require("pacman")) install.packages("pacman")
+library("pacman")
+pacman::p_load(
+  purrr, furrr, knitr, readr, parallel, rstan, dplyr, cmdstanr, posterior,
+  bayesplot, ggplot2, magrittr, stringr, tibble, tidyr, SPARK, HEARTSVG)
 
 
 # ----------------------------------------
@@ -75,12 +77,11 @@ cat("Pathways retained:", length(unique(gene_pathway_final)), "\n")
 # 4. Specify Stan model path
 # ----------------------------------------
 
+# If running from a local file instead
+stan_model_path <- "SPHERE_stan.stan"
+
 # Point to the compiled Stan file shipped with the package (or a local copy)
-stan_model_path <- system.file("stan", "SPHERE_stan.stan", package = "SPHERE")
-
-# If running from a local file instead, uncomment the line below:
-# stan_model_path <- "SPHERE_stan.stan"
-
+#stan_model_path <- system.file("stan", "SPHERE_stan.stan", package = "SPHERE")
 
 
 # ----------------------------------------
@@ -110,23 +111,11 @@ summary_df <- BrC_fit$summary
 cat("\nParameters with Rhat > 1.05:\n")
 print(summary_df[summary_df$rhat > 1.05, ])
 
-# 6b. Extract posterior classification of spatially expressed genes
-#     Z[j] = 1 means gene j is non-spatially expressed
-#     Z[j] = 2 means gene j is spatially expressed
+# 6b. Extract posterior classification of genes
+#     Z[j] = 1 means gene j is non-se Z[j] = 2 means gene j is se
 z_rows <- grep("^Z\\[", summary_df$variable)
 z_summary <- summary_df[z_rows, ]
 
-# Posterior mean of Z: values close to 2 indicate strong SVG evidence
-z_summary$gene <- colnames(data_mat)
-z_summary$prob_svg <- z_summary$mean - 1  # rescale to 0-1 probability
-
-# 6c. Identify top spatially expressed genes (posterior P(SVG) > 0.5)
-svg_genes <- z_summary[z_summary$prob_svg > 0.5, ]
-svg_genes <- svg_genes[order(-svg_genes$prob_svg), ]
-
-cat("\nTop spatially expressed genes (P(SEG) > 0.5):\n")
-print(head(svg_genes[, c("gene", "prob_svg")], 10))
-
-# 6d. Save results
-save(BrC_fit, z_summary, svg_genes, file = "SPHERE_BrC_results.RData")
+# 6c. Save results
+save(BrC_fit, z_summary, file = "SPHERE_BrC_results.RData")
 cat("\nResults saved to SPHERE_BrC_results.RData\n")
