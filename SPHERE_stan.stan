@@ -55,109 +55,118 @@ data {
 
 
 // ---------------------------------------------------------------
-// PARAMETER
+// PARAMETERS BLOCK
+// ---------------------------------------------------------------
+// These are the unknown quantities that Stan will estimate via HMC.
+// Stan explores the joint posterior distribution over all of these.
 // ---------------------------------------------------------------
 
 parameters {
-  real mu0;
-  // gene-level mixture probabilities
-  array[P] simplex[2] pii;
-  // latent log-rates (this is log(lambda_ij) in your theory)
-  matrix[N, P] loglambda;
-  // observation-level noise (per gene)
-  vector<lower=1e-6>[P] sigma_sd;
-  // spatial GP amplitude + lengthscale (per gene)
-  vector<lower=1e-6>[P] sig_eta_gs;
-  vector<lower=1e-6>[P] ell_gs;
-  // low-rank GP weights (per gene)
-  matrix[r, P] w;
-  // pathway CAR gene effects
-  vector[P] Beta;
-  real<lower=1e-6> sigma_beta;
-  real<lower=1e-6, upper=0.999> rho;
+  real mu0;                               // Global mean log-expression intercept; Shared across all genes and all spots; Represents the baseline expression level on the log scale
+  array[P] simplex[2] pii;                // Per-gene mixture probabilities pii[j,1] = prob gene j is NON-SE (Z_j=1), pii[j,2] = prob gene j IS SE (Z_j=2)
+  matrix[N, P] loglambda;                 // Latent log-rate matrix (spots x genes), where lambda_ij is the true expression rate for gene j at spot i
+  vector<lower=1e-6>[P] sigma_sd;         // Per-gene observation-level standard deviation; Controls how much loglambda[i,j] can deviate from its mean
+  vector<lower=1e-6>[P] sig_eta_gs;       // Per-gene GP amplitude (signal standard deviation)  Scales the magnitude of the spatial effect for gene j
+  vector<lower=1e-6>[P] ell_gs;           // Per-gene GP lengthscale; Controls how quickly spatial correlation decays with distance
+  matrix[r, P] w;                         // Low-rank GP weight matrix (knots x genes); w[b,j] = weight for knot b contributing to gene j's spatial effect
+  vector[P] Beta;                         // Gene-level pathway effect coefficients; Beta[j] = the effect of gene j's pathway membership on expression
+  real<lower=1e-6> sigma_beta;            // CAR conditional standard deviation; Controls how tightly genes within a pathway are pulled together
+  real<lower=1e-6, upper=0.999> rho;      // Spatial autocorrelation parameter for the CAR prior; Controls the degree of borrowing between pathway neighbors
 }
 
 
+
+// ---------------------------------------------------------------
+// TRANSFORMED PARAMETERS BLOCK
+// ---------------------------------------------------------------
+// Deterministic transformations of parameters, computed each iteration.
+// These are intermediate quantities derived from the raw parameters.
+// ---------------------------------------------------------------
 
 transformed parameters {
-  //-----------------------------------------------------------
-  // Compute low-rank RBF spatial effects: use median of distance as lengthscale
-  //   eta_gs_trans[:, j] = sig_eta_gs[j] * (Phi * eta_gs[:, j])
-  //-----------------------------------------------------------
-    matrix[N, P] eta;
-    matrix[N, P] tmp = Phi * w;  // N x P
-    for (j in 1:P) {
-      eta[, j] = sig_eta_gs[j] * tmp[, j];
-    }
+  matrix[N, P] eta;                            // The spatial effect matrix (spots x genes); eta[i,j] = spatial contribution to log-rate for gene j at spot i
+  matrix[N, P] tmp = Phi * w;                  // Intermediate: raw basis expansion (N x P); tmp = Phi (N x r) times w (r x P) = N x P matrix; use median of distance as lengthscale
+  for (j in 1:P) {
+    eta[, j] = sig_eta_gs[j] * tmp[, j];       // Scale the raw spatial effect by the gene-specific GP amplitude; This improves HMC sampling by decoupling the amplitude
+  }
 }
 
 
+
+
+// ---------------------------------------------------------------
+// MODEL BLOCK
+// ---------------------------------------------------------------
+// Specifies the full joint log-posterior:
+// log p(parameters | data) = log p(data | parameters) + log p(parameters)
+// Stan adds all target += statements to compute this.
+// ---------------------------------------------------------------
 
 model {
-  // --------------------------
-  // Priors
-  // --------------------------
-  target += normal_lpdf(mu0 | a_mu, b_mu);
+  // ===========================================
+  // SECTION 1: PRIOR DISTRIBUTIONS
+  // ===========================================
+  // These encode our prior beliefs about parameter values before seeing data.
 
-  for (j in 1:P) {
-    pii[j] ~ dirichlet(alpha);
-
-    // “half-normal” via normal with lower bound
-    sigma_sd[j] ~ normal(a_err, b_err);
-    sig_eta_gs[j] ~ normal(a_gs, b_gs);
-    ell_gs[j] ~ lognormal(a_gsl, b_gsl);
-
-    // GP weights
-    w[, j] ~ normal(0, 1);
+  target += normal_lpdf(mu0 | a_mu, b_mu);           // Prior on global intercept: mu0 ~ Normal(a_mu, b_mu)
+  for (j in 1:P) {                                   // Loop over all P genes
+    pii[j] ~ dirichlet(alpha);                       // Prior on mixture weights for gene j; pii[j] ~ Dirichlet(alpha[1], alpha[2]) and Controls the prior probability of being spatially variable
+    sigma_sd[j] ~ normal(a_err, b_err);              // Prior on observation noise for gene j; Larger b_err = more diffuse prior, allows more noise
+    sig_eta_gs[j] ~ normal(a_gs, b_gs);              // Prior on GP amplitude for gene j; Controls expected strength of spatial signal
+    ell_gs[j] ~ lognormal(a_gsl, b_gsl);             // Prior on GP lengthscale for gene j
+    w[, j] ~ normal(0, 1);                           // Prior on GP weights for gene j;  Standard normal prior on each of the r knot weights
   }
+  sigma_beta ~ normal(a_tau_beta, b_tau_beta);       // Prior on CAR conditional SD;  Controls how dispersed gene effects are within pathways
+  rho ~ beta(a_rho, b_rho);                          // Prior on CAR autocorrelation parameter; Larger a_rho pushes rho toward 1 (stronger spatial smoothing)
 
-  sigma_beta ~ normal(a_tau_beta, b_tau_beta);
-  rho ~ beta(a_rho, b_rho);
 
-  // --------------------------
-  // Conditional CAR prior for Beta (pathway neighbors)
-  // Matches: Beta_j | neighbors ~ N( rho * mean(neighbors), sigma_beta / sqrt(n_j) )
-  // --------------------------
-  {
-    // adjacency is implicit: same gene_group => neighbors
-    for (j in 1:P) {
-      real nj = 0;
-      real sum_nb = 0;
+  // ================================================
+  // SECTION 2: CAR PRIOR FOR GENE PATHWAY EFFECTS
+  // ================================================
+  // This implements a Conditional Autoregressive (CAR) prior on Beta[j].
+  // Genes in the same pathway are "neighbors" and share information.
+  // The full conditional for each gene is: Beta[j] | Beta[-j] ~ Normal(rho * mean(neighbors), sigma_beta / sqrt(n_j)), where n_j = number of neighbors of gene j.
+  {                     
+    for (j in 1:P) {                                  // Loop over each gene
+      real nj = 0;                                    // Counter: number of neighbors of gene j
+      real sum_nb = 0;                                // Accumulator: sum of Beta values of gene j's neighbors
 
-      for (k in 1:P) {
-        if (k != j && gene_group[k] == gene_group[j]) {
-          nj += 1;
-          sum_nb += Beta[k];
+      for (k in 1:P) {                                // Inner loop: check all other genes
+        if (k != j && gene_group[k] == gene_group[j]) {// Gene k is a neighbor of gene j if:
+          nj += 1;                                    // Increment neighbor count
+          sum_nb += Beta[k];                          // Add gene k's Beta to the running sum
         }
       }
-
-      if (nj > 0.5) {
+      if (nj > 0.5) {                                 // If gene j has at least 1 neighbor (using > 0.5 instead)
         Beta[j] ~ normal(rho * (sum_nb / nj), sigma_beta / sqrt(nj));
+                                                      // CAR full conditional
       } else {
-        Beta[j] ~ normal(0, 10); // isolated gene
+        Beta[j] ~ normal(0, 10);                      // Isolated gene (no pathway neighbors) Given a weakly informative prior centered at 0
       }
     }
-  }
+  }                 
 
-  // --------------------------
-  // Mixture PRIOR for loglambda (GENE-LEVEL, not spot-level)
-  // This is the critical fix: Z_j is per gene.
-  //
-  // Non-SE component (Z_j=1): loglambda_ij ~ Normal(mu0 + Beta_j, sigma_sd_j)
-  // SE component (Z_j=2):     loglambda_ij ~ Normal(mu0 + Beta_j + eta_ij, sigma_sd_j)
-  //
-  // We marginalize Z_j via log_mix over the WHOLE gene likelihood (sum over i).
-  // --------------------------
 
-    for (j in 1:P) {
-    for (i in 1:N) {
-      target += poisson_log_lpmf(Y[i,j] |log(N_i[i]) + loglambda[i,j]);
+  // =============================================================
+  // SECTION 3: MIXTURE LIKELIHOOD
+  // =============================================================
+  // This is the core of the model. For each gene j and spot i:
+  //   1. The observed count Y[i,j] follows a Poisson with rate N_i * lambda_ij
+  //   2. The latent log-rate loglambda[i,j] comes from a two-component mixture:
+  //      - Component 1 (non-SE): loglambda ~ Normal(mu0 + Beta[j], sigma_sd[j])
+  //      - Component 2 (SE):     loglambda ~ Normal(mu0 + Beta[j] + eta[i,j], sigma_sd[j])
+  for (j in 1:P) {               // Loop over all genes
+    for (i in 1:N) {             // Loop over all spots
+
+      target += poisson_log_lpmf(Y[i,j] | log(N_i[i]) + loglambda[i,j]); // Y[i,j] ~ PoissonLog(log(N_i[i]) + loglambda[i,j])
       target += log_mix(
-                    pii[j,1], normal_lpdf(loglambda[i,j] | mu0 + Beta[j],             sigma_sd[j]),
-                              normal_lpdf(loglambda[i,j] | mu0 + Beta[j] + eta[i, j], sigma_sd[j]));
+                    pii[j,1],                                            // MIXTURE PRIOR on loglambda (marginalized over Z_j):
+                    normal_lpdf(loglambda[i,j] | mu0 + Beta[j],             sigma_sd[j]),  //         -> mean is just baseline + pathway effect
+                    normal_lpdf(loglambda[i,j] | mu0 + Beta[j] + eta[i, j], sigma_sd[j])); //         -> mean shifts by the GP-derived spatial pattern
     }
   }
 }
+
 
 
 // ---------------------------------------------------------------
