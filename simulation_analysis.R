@@ -3,7 +3,7 @@
 # ============================================================================
 # This script demonstrates how to:
 #   1. Generate synthetic spatial transcriptomics data under the SPHERE model
-#   2. Fit the model using fit_sphere() and recover known parameters
+#   2. Fit the model using fit_sphere()
 #   3. Run replicated simulations for benchmarking
 #
 # The data-generating process mirrors the Stan model exactly:
@@ -16,8 +16,6 @@
 # ----------------------------------------------------------------------------
 # 0. Setup
 # ----------------------------------------------------------------------------
-
-library(SPHERE)
 library(posterior)
 library(bayesplot)
 library(ggplot2)
@@ -39,15 +37,15 @@ theme_set(theme_bw())
 # A1. Define simulation parameters
 # ----------------------------------------------------------------------------
 
-num_spots <- 150
-num_genes <- 50
+num_spots <- 100
+num_genes <- 20
 prop      <- c(0.8, 0.2)     # 80% non-SE, 20% SE genes
 G         <- 10               # number of pathway groups
 seed      <- 124
 
 # GP parameter vectors for SE genes (one value per SE gene)
 n_se  <- round(num_genes * prop[2])
-tau_g <- seq(0.5, by = 0.05, length.out = n_se)
+tau_g <- seq(1.5, by = 0.05, length.out = n_se)
 ell_g <- seq(1.0, by = 0.03, length.out = n_se)
 
 # Generate pathway group assignments and spatial coordinates
