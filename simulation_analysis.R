@@ -112,13 +112,13 @@ accuracy <- mean(z_est == z_true)
 cat("\nGene classification accuracy:", round(accuracy * 100, 1), "%\n")
 
 # Save single-run results
-save(sim_fit, sim_data, file = "SPHERE_simulation_single.RData")
-cat("Results saved to SPHERE_simulation_single.RData\n")
+# save(sim_fit, sim_data, file = "SPHERE_simulation_single.RData")
+# cat("Results saved to SPHERE_simulation_single.RData\n")
 
 
 # ============================================================================
 #
-# PART B: REPLICATED SIMULATION STUDY
+# PART B: REPLICATION FOR SIMULATION STUDY
 #
 # ============================================================================
 
@@ -238,30 +238,5 @@ results <- lapply(seq_len(n_reps), function(i) {
 #     out_dir   = out_dir
 #   )
 # }, future.seed = TRUE)
-#
-# plan(sequential)
 
 
-# ----------------------------------------------------------------------------
-# B3. Aggregate results across replications
-# ----------------------------------------------------------------------------
-
-rds_files   <- list.files(out_dir, pattern = "^sim_rep.*\\.rds$",
-                          full.names = TRUE)
-all_results <- lapply(rds_files, readRDS)
-
-cat("\nLoaded", length(all_results), "replications.\n")
-
-# Classification accuracy per replication
-accuracies <- sapply(all_results, function(res) {
-  z_rows <- grep("^Z\\[", res$fit$summary$variable)
-  z_est  <- round(res$fit$summary$mean[z_rows])
-  z_true <- res$data$Z
-  mean(z_est == z_true)
-})
-
-cat("\n--- Classification Accuracy Across Replications ---\n")
-cat("Mean: ", round(mean(accuracies) * 100, 1), "%\n")
-cat("SD:   ", round(sd(accuracies) * 100, 1), "%\n")
-cat("Range:", round(min(accuracies) * 100, 1), "-",
-    round(max(accuracies) * 100, 1), "%\n")
