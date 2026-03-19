@@ -232,8 +232,7 @@ generate_genedata_pattern <- function(
 gen_genedata_model <- function(
     spots, num_genes, prop = c(0.8, 0.2), G, gene_grp, 
     rho = 0.85, tau_beta = 10, tau_gs = NULL, ell_gs = NULL, 
-    nugget = 1e-6, eps_sd = 0.20, 
-    depth_model = c("poisson", "negbin", "fixed"), 
+    nugget = 1e-6, eps_sd = 0.20, depth_model = c("poisson", "negbin", "fixed"), 
     depth_lambda = 5,    # mean for poisson or negbin
     depth_size   = 5,    # overdispersion for negbin (smaller = more overdispersed)
     depth_fixed  = 1, 
@@ -278,7 +277,7 @@ gen_genedata_model <- function(
   # -------------------------------------------
   n_se  <- round(P * prop[2])
   se_idx <- sort(sample(seq_len(P), n_se))
-  nonse_idx <- setdiff(seq_len(p), se_idx)
+  nonse_idx <- setdiff(seq_len(P), se_idx)
   Z      <- rep(1L, P)
   Z[se_idx] <- 2L
   
