@@ -89,7 +89,7 @@ f_j(s_i) ~ GP(0, k_RBF)   [low-rank approximation with r knots]
 
 beta_j ~ CAR(rho, tau)     [pathway-informed CAR prior]
 
-Z_j ~ Mixture(pi_j)        [SE / non-SE classification]
+$$Z_j \sim Mixture(pi_j)$$        [SE / non-SE classification]
 ```
 
 Where:
@@ -100,18 +100,6 @@ Where:
 - `Z_j = 2` indicates gene `j` is spatially expressed
 
 ---
-
-# ## Main Functions
-# 
-# | Function | Description |
-# |---|---|
-# | `fit_sphere()` | Fit the SPHERE model to spatial transcriptomics data |
-# | `plot_gene_data()` | Visualize spatial expression patterns |
-# | `filter_columns_by_sum()` | Filter low-count genes before model fitting |
-# | `make_rbf_basis()` | Construct low-rank RBF Gaussian Process basis |
-# | `make_rbf_dist()` | Compute knot distances for GP approximation |
-# 
-# ---
 
 ## Citation
 
