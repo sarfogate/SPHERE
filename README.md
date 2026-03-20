@@ -80,7 +80,7 @@ print(z_summary)
 
 SPHERE models spatial transcriptomics count data using a hierarchical Bayesian framework:
 
-```
+
 Y_ij ~ Poisson(N_i * exp(lambda_ij))
 
 lambda_ij = mu_0 + beta_j + f_j(s_i)
@@ -90,7 +90,7 @@ f_j(s_i) ~ GP(0, k_RBF)   [low-rank approximation with r knots]
 beta_j ~ CAR(rho, tau)     [pathway-informed CAR prior]
 
 $$Z_j \sim Mixture(pi_j)$$        [SE / non-SE classification]
-```
+
 
 Where:
 - `Y_ij` is the count for gene `j` at spot `i`
