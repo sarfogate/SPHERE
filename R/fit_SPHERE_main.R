@@ -63,7 +63,7 @@
 #' The posterior probability of spatial variability for gene \eqn{j} is
 #' estimated as the fraction of posterior samples where \eqn{Z_j = 2}.
 #'
-#' @seealso \code{\link{make_rbf_basis}}, \code{\link{make_rbf_dist}}
+#' @seealso \code{make_rbf_basis}, \code{make_rbf_dist}
 #'
 #' @examples
 #' \dontrun{
@@ -86,14 +86,16 @@
 #' @importFrom stats dist median rnorm runif
 #' @importFrom gtools rdirichlet
 #' @export
-#' 
-#' 
+#'
+#'
 ## =============================================================================================
 
-fit_sphere <- function(data_mat, spot, gene_group, stan_model_path, chains = 3, 
+fit_sphere <- function(data_mat, spot, gene_group,
+                       stan_model_path = system.file("stan", "SPHERE_stan.stan", package = "SPHERE"),
+                       chains = 3,
                        iter_sampling = 2000,  iter_warmup = 1000, knots = 30,
                        seed = 8, alpha = c(10, 3), refresh = 100) {
-  
+
   # ------------------------------------------------------------------
   # 1. Input validation
   # ------------------------------------------------------------------
@@ -101,64 +103,64 @@ fit_sphere <- function(data_mat, spot, gene_group, stan_model_path, chains = 3,
     stop("`data_mat` must be a matrix or data frame.", call. = FALSE)
   }
   data_mat <- round(as.matrix(data_mat))
-  
+
   if (!is.matrix(spot) && !is.data.frame(spot)) {
     stop("`spot` must be a matrix or data frame of spatial coordinates.",
          call. = FALSE)
   }
   spot <- as.matrix(spot)
-  
+
   if (nrow(data_mat) != nrow(spot)) {
     stop("Number of rows in `data_mat` (", nrow(data_mat),
          ") must match number of rows in `spot` (", nrow(spot), ").",
          call. = FALSE)
   }
-  
+
   if (any(data_mat < 0)) {
     stop("`data_mat` must contain non-negative counts.", call. = FALSE)
   }
-  
+
   # ------------------------------------------------------------------
   # 2. Extract dimensions
   # ------------------------------------------------------------------
   n <- nrow(data_mat)
   p <- ncol(data_mat)
-  
+
   gene_grp <- as.integer(factor(gene_group))
   G <- length(unique(gene_grp))
-  
+
   if (length(gene_grp) != p) {
     stop("`gene_group` must have length equal to the number of genes (",
          p, "), but has length ", length(gene_grp), ".", call. = FALSE)
   }
-  
+
   if (knots >= n) {
     warning("Number of knots (", knots, ") >= number of spots (", n,
             "). Setting knots to n/2.", call. = FALSE)
     knots <- max(floor(n / 2), 1L)
   }
-  
+
   # ------------------------------------------------------------------
   # 3. Normalization and spatial distances
   # ------------------------------------------------------------------
   N_i <- rowSums(data_mat)
-  
+
   if (any(N_i == 0)) {
     stop("Some spots have zero total counts. Remove empty spots before ", "fitting.", call. = FALSE)
   }
   dist_sq <- as.matrix(dist(spot))^2
-  
+
   # ------------------------------------------------------------------
   # 4. Low-rank GP basis construction
   # ------------------------------------------------------------------
   D   <- make_rbf_dist(spot, r = knots)
   Phi <- make_rbf_basis(spot, r = knots, lengthscale = NULL)
   r   <- knots
-  
+
   # ------------------------------------------------------------------
   # 5. Assemble Stan data list
   # ------------------------------------------------------------------
-  
+
   stan_data <- list(
     P = p,                                            # number of genes
     N = n,                                            # number of spatial locations
@@ -180,12 +182,12 @@ fit_sphere <- function(data_mat, spot, gene_group, stan_model_path, chains = 3,
     D = D,
     Phi = Phi
   )
-  
- 
+
+
   # ------------------------------------------------------------------
   # 6. Initial values for MCMC (data-driven, robust to zeros)
   # ------------------------------------------------------------------
-  
+
   # Compute safe log-rates from the data to initialize loglambda.
   # Replace zeros with 0.5 before taking log to avoid -Inf, then
   # subtract log(N_i) to get the rate on the correct scale.
@@ -196,7 +198,7 @@ fit_sphere <- function(data_mat, spot, gene_group, stan_model_path, chains = 3,
   beta_init   <- colMeans(resid_init)              # per-gene mean residual
   ll_init     <- sweep(log_rates, 2, beta_init)    # loglambda ~ log_rate - beta
   med_dist    <- median(sqrt(D))                   # typical spot-knot distance
-  
+
   init_fun <- function() {
     list(
       mu0        = mu0_init,
@@ -211,18 +213,22 @@ fit_sphere <- function(data_mat, spot, gene_group, stan_model_path, chains = 3,
       rho = runif(1, 0.7, 0.95)
     )
   }
-  
+
   # ------------------------------------------------------------------
   # 7. Compile and fit model
   # ------------------------------------------------------------------
 
   # Compile Stan model from file
+  if (!file.exists(stan_model_path)) {
+    stop("Stan model file not found at: ", stan_model_path,
+         "\nRe-install the SPHERE package.", call. = FALSE)
+  }
   model <- cmdstanr::cmdstan_model(stan_model_path)
-  
+
   # Start timing model fitting
   t_start <- proc.time()[3]
-  
-  # Run MCMC sampling  
+
+  # Run MCMC sampling
   fit <- model$sample(
     data            = stan_data,
     chains          = chains,
@@ -233,17 +239,17 @@ fit_sphere <- function(data_mat, spot, gene_group, stan_model_path, chains = 3,
     init            = init_fun,
     refresh         = refresh
   )
-  
-  # Compute total runtime  
+
+  # Compute total runtime
   runtime <- proc.time()[3] - t_start
-  
+
   message("SPHERE model fitting completed in ", round(runtime, 1), " seconds.")
-  
+
   # ------------------------------------------------------------------
   # 8. Posterior summaries
   # ------------------------------------------------------------------
-  
-  # Extract summary statistics for key model parameters  
+
+  # Extract summary statistics for key model parameters
   summary <- fit$summary(
     variables = c("pii", "Z", "rho", "sig_eta_gs",
                   "Beta", "mu0", "sigma_beta", "ell_gs"),
@@ -251,10 +257,10 @@ fit_sphere <- function(data_mat, spot, gene_group, stan_model_path, chains = 3,
     quantiles = ~ posterior::quantile2(., probs = c(0.025, 0.975)),
     posterior::default_convergence_measures()
   )
-  
+
   # Extract posterior draws
   draws_array <- fit$draws()
-  
+
   # ------------------------------------------------------------------
   # 9. Return results
   # ------------------------------------------------------------------
@@ -263,8 +269,8 @@ fit_sphere <- function(data_mat, spot, gene_group, stan_model_path, chains = 3,
       fit = fit,                                     # full CmdStan object
       summary = summary,                             # posterior summaries
       draws = draws_array,                           # selected posterior samples
-      stan_data = stan_data,                         # stan data 
-      runtime = runtime                              # computation time    
+      stan_data = stan_data,                         # stan data
+      runtime = runtime                              # computation time
     ),
     class = "sphere_fit"
   )

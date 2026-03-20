@@ -1,4 +1,7 @@
-
+#' @importFrom stats kmeans quantile rnbinom rpois sd
+#' @importFrom data.table as.data.table
+#' @importFrom ggplot2 ggplot aes geom_point scale_color_gradientn
+#'   theme_minimal labs theme element_blank
 
 ## ------------------------------------------------------------
 ## Function to generate fixed number of spots (coordinates)
@@ -20,52 +23,52 @@ generate_spatial_spots <- function(num_spots, x1 = 0, x2 = 1, y1 = 0, y2 = 1, se
 ## Function to simulate a name spatial pattern
 ## ------------------------------------------------------------
 
-simulate_expression <- function(spots, pat_type, high_exp_prop = 0.3, 
-                                grad_percent = 0.3, gene_id = NULL, seed =NULL){ 
+simulate_expression <- function(spots, pat_type, high_exp_prop = 0.3,
+                                grad_percent = 0.3, gene_id = NULL, seed =NULL){
   # Set seed for reproducibility
   if (!is.null(seed)) {
     set.seed(seed)
   }
-  
+
   x1 <- min(spots$x) ; x2 <- max(spots$x)
   y1 <- min(spots$y) ; y2 <- max(spots$y)
-  
+
   # Calculate dynamic ranges
   x_range <- x2 - x1 ; y_range <- y2 - y1
-  
+
   # Normalize coordinates to [0,1] for scale-invariant patterns
   spots$x_norm <- (spots$x - x1) / x_range
   spots$y_norm <- (spots$y - y1) / y_range
-  
+
   # Determine number of high-expression spots for the pattern
   num_high <- round(high_exp_prop * nrow(spots))
-  
+
   spots$eta <- 0  # Default to low expression
-  
+
   if (is.null(pat_type)) {
     spots$eta <- 0
   } else {
-    
+
     # Center in normalized space
     center_x <- 0.5  # Center in [0,1] normalized space
     center_y <- 0.5
-    
+
     # Gene-specific random centers in normalized space
     if (!is.null(gene_id)) {
       center_x <- runif(1, 0.1, 0.9)  # Random center in [0.1, 0.9]
       center_y <- runif(1, 0.1, 0.9)
     }
-    
+
     if (pat_type == "hotspot") {
       # Use normalized coordinates for distance calculation
       radius <- sqrt(sort((spots$x_norm - center_x)^2 + (spots$y_norm - center_y)^2)[num_high])
       spots$eta <- as.integer((spots$x_norm - center_x)^2 + (spots$y_norm - center_y)^2 <= radius^2)
-      
+
     } else if (pat_type == "streak") {
       streak_x <- if (is.null(gene_id)) center_x else runif(1, 0.1, 0.9)
       streak_spots <- order(abs(spots$x_norm - streak_x))[1:num_high]  # Select num_high closest spots
       spots$eta[streak_spots] <- 1
-      
+
     } else if (pat_type == "gradient") {
       threshold_x <- grad_percent  # In normalized space [0,1]
       spots$eta <- pmax(0, pmin(1, (spots$x_norm - threshold_x) / (1 - threshold_x)))
@@ -73,12 +76,12 @@ simulate_expression <- function(spots, pat_type, high_exp_prop = 0.3,
         shift <- runif(1, -0.2, 0.2)  # Smaller shift to avoid collapsing
         spots$eta <- pmax(0, pmin(1, spots$eta + shift))
       }
-      
+
     } else if (pat_type == "ring") {
       distances <- (spots$x_norm - center_x)^2 + (spots$y_norm - center_y)^2
       ring_spots <- order(abs(distances - median(distances)))[1:num_high]
       spots$eta[ring_spots] <- 1
-      
+
     } else if (pat_type == "wave") {
       phase <- if (!is.null(gene_id)) runif(1, -1, 1) else 0
       freq <- if (!is.null(gene_id)) runif(1, 2.5, 5.5) else 4
@@ -101,7 +104,7 @@ simulate_expression <- function(spots, pat_type, high_exp_prop = 0.3,
   }
   # Remove normalized columns to keep output clean
   spots$x_norm <- NULL ;  spots$y_norm <- NULL
-  
+
   return(spots) # Return only pattern data
 }
 
@@ -111,28 +114,28 @@ simulate_expression <- function(spots, pat_type, high_exp_prop = 0.3,
 # Function -- Pattern-based ST count data generator
 # ------------------------------------------------------------
 
-generate_genedata_pattern <- function( 
+generate_genedata_pattern <- function(
     spots, num_genes, prop = c(0.8, 0.2), pat_type, seed = NULL, G, gene_grp, cor_grp, tau_beta,
     high_exp_prop = 0.3,       # proportion of spots in high-expression region
     grad_percent  = 0.2,       # gradient threshold (for gradient pattern)
     beta0         = 2,         # log-scale baseline (Non-SE and low SE spots)
     beta1         = NULL,      # log-scale high-expression for SE genes
     sigma         = 0.3) {     # noise sd on log scale
-  
+
   if (!is.null(seed)) set.seed(seed)
-  
+
   if (length(prop) != 2 || any(prop < 0) || abs(sum(prop) - 1) > 1e-6)
     stop("prop must be a vector of length 2 summing to 1")
-  
+
   spots <- as.data.frame(spots)
   colnames(spots)[1:2] <- c("x", "y")
-  
+
   n <- nrow(spots)
   p <- num_genes
-  
+
   ## default beta1: 3x fold change over beta0
   if (is.null(beta1)) beta1 <- beta0 + log(3)
-  
+
   ## -----------------------------
   ## 1. Gene counts per category
   ## -----------------------------
@@ -141,7 +144,7 @@ generate_genedata_pattern <- function(
     (p - sum(num_cat))
   n_nonse <- num_cat[1]
   n_se    <- num_cat[2]
-  
+
   ## -----------------------------
   ## 2. Random gene arrangement
   ## -----------------------------
@@ -149,46 +152,46 @@ generate_genedata_pattern <- function(
   nonse_idx <- setdiff(seq_len(p), se_idx)
   Z         <- rep(1L, p)
   Z[se_idx] <- 2L
-  
+
   ## -----------------------------
   ## 3. Gene-level dependence (CAR)
   ##    Scale Beta to [-0.3, 0.3] so it
   ##    acts as a small gene-level offset
   ##    without exploding log-lambda
   ## -----------------------------
-  Beta <- create_car_beta(p, gene_grp, cor_grp, tau_beta)
-  
+  Beta <- create_car_beta2(p, gene_grp, cor_grp, tau_beta)
+
   ## -----------------------------
   ## 4. Noise epsilon
   ## -----------------------------
   epsilon <- matrix(rnorm(n * p, mean = 0, sd = sigma), nrow = n, ncol = p)
-  
+
   ## -----------------------------
   ## 5. Generate counts
   ## -----------------------------
   result_mat <- matrix(0L, nrow = n, ncol = p)
-  
+
   # Non-SE genes: flat Poisson with beta0
   for (j in nonse_idx) {
     loglambda_j     <- beta0 + Beta[j] + epsilon[, j]
     result_mat[, j] <- rpois(n, lambda = exp(loglambda_j))
   }
-  
+
   # SE genes: Poisson with beta1 in high spots, beta0 elsewhere
   for (j in se_idx) {
     pattern_data <- simulate_expression(
       spots,  pat_type = pat_type,high_exp_prop = high_exp_prop,
       grad_percent  = grad_percent, gene_id  = j)
-    
+
     loglambda_j              <- beta0         + Beta[j] + epsilon[, j]
     high_mask                <- pattern_data$mark == "high"
     med_mask                 <- pattern_data$mark == "medium"
     loglambda_j[high_mask]   <- beta1             + Beta[j] + epsilon[high_mask, j]
     loglambda_j[med_mask]    <- (beta0 + beta1)/2 + Beta[j] + epsilon[med_mask,  j]
-    
+
     result_mat[, j] <- rpois(n, lambda = exp(loglambda_j))
   }
-  
+
   ## -----------------------------
   ## 6. Gene naming NonSE: Gene{i}_NonSE SE:    Gene{i}_SE_{pat_type}
   ## -----------------------------
@@ -196,7 +199,7 @@ generate_genedata_pattern <- function(
   gene_names[nonse_idx] <- paste0("Gene", nonse_idx, "_NonSE")
   gene_names[se_idx]    <- paste0("Gene", se_idx,    "_SE_", pat_type)
   colnames(result_mat)  <- gene_names
-  
+
   ## -----------------------------
   ## Summary
   ## -----------------------------
@@ -212,7 +215,7 @@ generate_genedata_pattern <- function(
       "| 95% =", paste(round(quantile(as.vector(result_mat), c(.025, .975))), collapse = ", "),
       "| max =", max(result_mat), "\n")
   cat("------------------------------------\n")
-  
+
   return(list(
     Y         = result_mat,   # N x P count matrix
     se_idx    = se_idx,       # column indices of SE genes
@@ -227,38 +230,38 @@ generate_genedata_pattern <- function(
 
 
 # ------------------------------------------------------------
-# Function -- SPHERE model data generator 
+# Function -- SPHERE model data generator
 # ------------------------------------------------------------
 gen_genedata_model <- function(
-    spots, num_genes, prop = c(0.8, 0.2), G, gene_grp, 
-    rho = 0.85, tau_beta = 10, tau_gs = NULL, ell_gs = NULL, 
-    nugget = 1e-6, eps_sd = 0.20, depth_model = c("poisson", "negbin", "fixed"), 
+    spots, num_genes, prop = c(0.8, 0.2), G, gene_grp,
+    rho = 0.85, tau_beta = 10, tau_gs = NULL, ell_gs = NULL,
+    nugget = 1e-6, eps_sd = 0.20, depth_model = c("poisson", "negbin", "fixed"),
     depth_lambda = 5,    # mean for poisson or negbin
     depth_size   = 5,    # overdispersion for negbin (smaller = more overdispersed)
-    depth_fixed  = 1, 
+    depth_fixed  = 1,
     target_mean  = 10,   # desired median count -- only parameter you may want to tune
     seed = NULL, verbose = TRUE) {
-  
+
   depth_model <- match.arg(depth_model)
-  
+
   # -----------------------
   # Checks
   # -----------------------
   stopifnot(is.matrix(spots) || is.data.frame(spots))
   spots <- as.matrix(spots)
   stopifnot(ncol(spots) >= 2)
-  
+
   if (length(prop) != 2 || any(prop < 0) || abs(sum(prop) - 1) > 1e-8)
     stop("prop must be length-2 and sum to 1 (Non-SE, SE).")
-  
+
   if (length(gene_grp) != num_genes)
     stop("gene_grp must have length num_genes.")
-  
+
   if (!is.null(seed)) set.seed(seed)
-  
+
   n <- nrow(spots)
   P <- num_genes
-  
+
   # -----------------------
   # Sequencing depth N_i
   # -----------------------
@@ -271,7 +274,7 @@ gen_genedata_model <- function(
   } else {
     N_i <- rep.int(as.integer(depth_fixed), n)
   }
-  
+
   # -------------------------------------------
   # Gene-level state Z_j : 1 = Non-SE, 2 = SE
   # -------------------------------------------
@@ -280,31 +283,31 @@ gen_genedata_model <- function(
   nonse_idx <- setdiff(seq_len(P), se_idx)
   Z      <- rep(1L, P)
   Z[se_idx] <- 2L
-  
-  
+
+
   # -----------------------
   # CAR Beta (pathway effect)
   # -----------------------
-  Beta <- create_car_beta2(num_genes = P, gene_grp = gene_grp, 
+  Beta <- create_car_beta2(num_genes = P, gene_grp = gene_grp,
                            rho = rho, tau_beta = tau_beta)
-  
+
   # -----------------------
   # iid noise epsilon_ij
   # -----------------------
   epsilon <- matrix(rnorm(n * P, mean = 0, sd = eps_sd), nrow = n, ncol = P)
-  
+
   # ---------------------------------------------------
   # Spatial effect eta_ij only for SE genes, else 0
   # ---------------------------------------------------
   eta <- matrix(0, nrow = n, ncol = P)
-  
+
   if (n_se > 0) {
     if (is.null(tau_gs)) tau_gs <- runif(n_se, 0.05, 0.30)
     if (is.null(ell_gs)) ell_gs <- runif(n_se, 0.50, 2.00)
-    
+
     if (length(tau_gs) != n_se) stop("tau_gs must have length = number of SE genes.")
     if (length(ell_gs) != n_se) stop("ell_gs must have length = number of SE genes.")
-    
+
     eta_se <- sim_gs_eta2(spots = spots[, 1:2, drop = FALSE], num_genes = n_se,
                           tau_gs = tau_gs, ell_gs = ell_gs, nugget = nugget)
     eta[, se_idx] <- eta_se
@@ -312,7 +315,7 @@ gen_genedata_model <- function(
     tau_gs <- numeric(0)
     ell_gs <- numeric(0)
   }
-  
+
   # -----------------------
   # AUTO-CALIBRATE mu0
   # -----------------------
@@ -320,29 +323,29 @@ gen_genedata_model <- function(
   # We want: median(N_i * exp(mu0 + log_part)) = target_mean
   # => mu0 = log(target_mean) - log(median(N_i)) - median(log_part)
   # This is fully automatic -- no manual tuning needed when n or P changes
-  
+
   log_part   <- sweep(epsilon + eta, 2, Beta, `+`)   # n x P
   mu0        <- log(target_mean) - log(median(N_i)) - median(log_part)
-  
+
   # -----------------------
   # Generate counts
   # -----------------------
   lambda <- exp(mu0 + log_part)                        # latent rate n x P
   Y_mean <- outer(N_i, rep(1, P)) * lambda             # Poisson mean n x P
   Y      <- matrix(rpois(n * P, lambda = as.vector(Y_mean)), nrow = n, ncol = P)
-  
+
   # Gene naming
   gene_names          <- character(P)
   gene_names[nonse_idx] <- paste0("Gene", nonse_idx, "_NonSE")
   gene_names[se_idx]    <- paste0("Gene", se_idx,    "_SE_model")
   colnames(Y)           <- gene_names
-  
+
   if (verbose) {
     cat("---- ST Simulation Summary ----\n")
     cat("n spots:", n, " | P genes:", P, "\n")
     cat("SE genes:", n_se, " (", round(100 * n_se / P, 1), "% )\n", sep = "")
-    cat("Depth model:", depth_model, 
-        " | median N_i:", median(N_i), 
+    cat("Depth model:", depth_model,
+        " | median N_i:", median(N_i),
         " | range:", paste(range(N_i), collapse = " - "), "\n")
     cat("mu0 (auto-calibrated):", signif(mu0, 4), "\n")
     cat("Expected mean counts : median =", signif(median(Y_mean), 4),
@@ -353,7 +356,7 @@ gen_genedata_model <- function(
         " | max =", max(Y), "\n")
     cat("-------------------------------\n")
   }
-  
+
   return(list(
     Y       = Y,
     N_i     = N_i,
@@ -378,7 +381,23 @@ gen_genedata_model <- function(
 
 pal <- colorRampPalette(c('#00274c', '#00274c',"lightyellow2",'#ffcb05','#ffcb05'))
 # Function to create a ggplot for each element in the list and arrange them in a grid
+
+#' Plot Gene Expression Data
+#'
+#' Creates spatial expression plots for selected genes arranged in a grid.
+#'
+#' @param gene_df A matrix or data frame of gene expression values.
+#' @param spot A matrix of spatial coordinates with two columns (x, y).
+#' @param genes Character vector of gene names to plot. If NULL, plots all genes.
+#' @param nrow Integer. Number of rows in the plot grid (default: 1).
+#'
+#' @return A grid of ggplot objects arranged by gridExtra.
+#'
+#' @importFrom ggplot2 ggplot aes geom_point scale_color_gradientn
+#'   theme_minimal labs theme element_blank
+#' @export
 plot_gene_data <- function(gene_df, spot, genes = NULL, nrow = 1) {
+  x <- y <- NULL  # fix R CMD CHECK note for ggplot2 aes variables
   gene_df <- as.matrix(gene_df)
   if (is.null(genes)) {
     genes <- colnames(gene_df)
@@ -395,16 +414,16 @@ plot_gene_data <- function(gene_df, spot, genes = NULL, nrow = 1) {
   rel_expr <- as.matrix(rel_expr)
   # 3. Create plots
   plots <- lapply(genes, function(gene_name) {
-    
+
     df_plot <- data.frame(x = spot[,1], y = spot[,2], expression = rel_expr[, gene_name])
-    
+
     ggplot(df_plot, aes(x, y, color = expression)) +
       geom_point(size = 4) +  scale_color_gradientn(colours = pal(5), limits = c(0, 1)) +
       theme_minimal() +  labs(
         title = paste("Relative Expression for\n", gene_name),
         color = "Relative\nExpression"
       ) + theme(
-        axis.title = element_blank(), axis.text = element_blank(),  
+        axis.title = element_blank(), axis.text = element_blank(),
         axis.ticks = element_blank())
   })
   # 4. Arrange grid
@@ -414,14 +433,31 @@ plot_gene_data <- function(gene_df, spot, genes = NULL, nrow = 1) {
 
 
 ##---------------------------------------------------------
-## Function to filter genes with less total counts 
+## Function to filter genes with less total counts
 ##---------------------------------------------------------
 
+#' Filter Genes with Low Total Counts
+#'
+#' Removes genes (columns) whose total count across all spots falls below
+#' a specified threshold.
+#'
+#' @param df A matrix or data frame of gene expression counts.
+#' @param threshold Numeric. Minimum total count required to keep a gene
+#'   (default: 10).
+#' @param keep_first Logical. If TRUE, always keeps the first column
+#'   (e.g. spot ID column) regardless of its sum (default: TRUE).
+#'
+#' @return A filtered data.table with low-count genes removed.
+#'
+#' @importFrom data.table as.data.table
+#' @export
 filter_columns_by_sum <- function(df, threshold = 10, keep_first = TRUE) {
+
+  ..cols_keep <- NULL  # fix R CMD CHECK note
+
   # Convert to data.table for convenience
-  library(data.table)
   dt <- as.data.table(df)
-  
+
   # Identify columns to check (skip first if keep_first = TRUE)
   if (keep_first) {
     numeric_part <- dt[, -1, with = FALSE]
@@ -431,6 +467,7 @@ filter_columns_by_sum <- function(df, threshold = 10, keep_first = TRUE) {
     sums <- colSums(dt, na.rm = TRUE)
     cols_keep <- names(dt)[sums > threshold]
   }
+
   # Return filtered table
   return(dt[, ..cols_keep])
 }
@@ -479,7 +516,22 @@ generate_gene_grp <- function(p, G = 3) {
 ##---------------------------------------------------------
 ## Function to get the tau and ell for SE genes
 ##---------------------------------------------------------
-get_tau_ell <- function(p, prop) {
+#' Get Tau and Ell Parameters for Spatially Expressed Genes
+#'
+#' Extracts the GP amplitude (tau) and lengthscale (ell) parameters
+#' for spatially expressed (SE) genes based on a given proportion.
+#'
+#' @param p Integer. Total number of genes.
+#' @param prop Numeric vector of length 2 giving the proportion of
+#'   non-SE and SE genes respectively (e.g. \code{c(0.7, 0.3)}).
+#' @param t_gs Numeric vector of GP amplitude values for SE genes.
+#' @param l_gs Numeric vector of GP lengthscale values for SE genes.
+#'
+#' @return A named list with elements \code{tau_gs} and \code{ell_gs},
+#'   each a numeric vector of length \code{round(prop[2] * p)}.
+#'
+#' @export
+get_tau_ell <- function(p, prop, t_gs, l_gs) {
   se_count <- round(prop[2] * p)
   list(
     tau_gs = t_gs[1:se_count],
@@ -503,7 +555,7 @@ relative_expr <- function(raw_exp) {
 
 create_car_beta2 <- function(num_genes, gene_grp, rho = 0.9, tau_beta = 1) {
   stopifnot(length(gene_grp) == num_genes)
-  
+
   # adjacency: connect genes in same pathway
   W <- matrix(0, num_genes, num_genes)
   for (i in 1:(num_genes - 1)) {
@@ -514,32 +566,32 @@ create_car_beta2 <- function(num_genes, gene_grp, rho = 0.9, tau_beta = 1) {
       }
     }
   }
-  
+
   deg <- rowSums(W)
   D <- diag(deg)
-  
+
   # Base CAR precision (before scaling)
   Q0 <- D - rho * W
-  
+
   # Handle isolated genes: iid Normal with precision tau_beta
   iso <- which(deg == 0)
   if (length(iso) > 0) Q0[iso, iso] <- 1
-  
+
   # Symmetrize & scale
   Q <- tau_beta * (Q0 + t(Q0))/2
-  
+
   # Check PD
   ev <- eigen(Q, symmetric = TRUE, only.values = TRUE)$values
   if (min(ev) <= 0) {
     stop(sprintf("Q is not positive definite; min eigenvalue = %.3e. Reduce rho.", min(ev)))
   }
-  
+
   # Sample Beta ~ N(0, Q^{-1}) via Cholesky solve
   R <- chol(Q)                        # upper triangular
   z <- rnorm(num_genes)
   Beta <- backsolve(R, z, transpose=TRUE)  # solves R' x = z
   Beta <- backsolve(R, Beta)               # solves R  beta = x  => beta = Q^{-1/2} z
-  
+
   Beta
 }
 
