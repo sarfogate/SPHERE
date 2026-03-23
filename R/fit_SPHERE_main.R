@@ -121,7 +121,7 @@ fit_sphere <- function(data_mat,  spot, gene_group, iter_sampling = 2000, iter_w
                        stan_model_path = system.file("stan", "SPHERE_stan.stan", package = "SPHERE"),
                        chains  = 3,  seed  = 8, knots  = 30, alpha  = c(10, 3), refresh = 100,
                        mu_noise = 0, sd_noise = 1, mu_gp_lengthscale = 0, sd_gp_lengthscale = 3,
-                       mu_gp_amplitude = 0, sd_gp_amplitude = 12, shape_car_cor = 2,
+                       mu_gp_amplitude = 0, sd_gp_amplitude = 12, shape_car_cor = 5,
                        rate_car_cor  = 2, mu_car_precision   = 1, sd_car_precision   = 1) {
 
   # ------------------------------------------------------------------
