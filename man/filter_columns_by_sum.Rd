@@ -9,16 +9,16 @@ filter_columns_by_sum(df, threshold = 10, keep_first = TRUE)
 \arguments{
 \item{df}{A matrix or data frame of gene expression counts.}
 
-\item{threshold}{Numeric. Minimum total count required to keep a gene
-(default: 10).}
+\item{threshold}{Numeric. Minimum total count required to keep a
+gene (default: 10).}
 
 \item{keep_first}{Logical. If TRUE, always keeps the first column
-(e.g. spot ID column) regardless of its sum (default: TRUE).}
+regardless of its sum (default: TRUE).}
 }
 \value{
-A filtered data.table with low-count genes removed.
+A filtered \code{data.table} with low-count genes removed.
 }
 \description{
-Removes genes (columns) whose total count across all spots falls below
-a specified threshold.
+Removes genes (columns) whose total count across all spots falls
+below a specified threshold.
 }

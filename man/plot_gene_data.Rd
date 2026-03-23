@@ -7,16 +7,18 @@
 plot_gene_data(gene_df, spot, genes = NULL, nrow = 1)
 }
 \arguments{
-\item{gene_df}{A matrix or data frame of gene expression values.}
+\item{gene_df}{A matrix or data frame of gene expression values
+(spots x genes).}
 
 \item{spot}{A matrix of spatial coordinates with two columns (x, y).}
 
-\item{genes}{Character vector of gene names to plot. If NULL, plots all genes.}
+\item{genes}{Character vector of gene names to plot. If NULL, plots
+all genes (default: NULL).}
 
 \item{nrow}{Integer. Number of rows in the plot grid (default: 1).}
 }
 \value{
-A grid of ggplot objects arranged by gridExtra.
+A grid of ggplot objects arranged by \pkg{gridExtra}.
 }
 \description{
 Creates spatial expression plots for selected genes arranged in a grid.

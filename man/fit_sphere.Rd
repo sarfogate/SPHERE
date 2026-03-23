@@ -22,7 +22,7 @@ fit_sphere(
   sd_gp_lengthscale = 3,
   mu_gp_amplitude = 0,
   sd_gp_amplitude = 12,
-  shape_car_cor = 2,
+  shape_car_cor = 5,
   rate_car_cor = 2,
   mu_car_precision = 1,
   sd_car_precision = 1

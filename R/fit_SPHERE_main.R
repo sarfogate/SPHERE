@@ -111,7 +111,7 @@
 #' @importFrom cmdstanr cmdstan_model
 #' @importFrom posterior default_summary_measures default_convergence_measures
 #'   quantile2
-#' @importFrom stats dist median rnorm runif
+#' @importFrom stats dist median rnorm runif sd
 #' @importFrom gtools rdirichlet
 #' @export
 
