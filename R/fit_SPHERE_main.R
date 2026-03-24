@@ -283,6 +283,10 @@ fit_sphere <- function(data_mat,  spot, gene_group, iter_sampling = 2000, iter_w
   # ------------------------------------------------------------------
   # 8. Posterior summaries
   # ------------------------------------------------------------------
+  # Get gene names from data_mat columns
+  gene_names <- colnames(data_mat)
+  if (is.null(gene_names)) gene_names <- paste0("Gene", seq_len(p))
+
   summary <- fit$summary(
     variables = c("pii", "Z", "rho", "sig_eta_gs",
                   "Beta", "mu0", "sigma_beta", "ell_gs"),
@@ -290,6 +294,17 @@ fit_sphere <- function(data_mat,  spot, gene_group, iter_sampling = 2000, iter_w
     quantiles = ~ posterior::quantile2(., probs = c(0.025, 0.975)),
     posterior::default_convergence_measures()
   )
+
+  # Add gene names to Z, Beta, sig_eta_gs, ell_gs rows
+  z_idx    <- grep("^Z\\[",          summary$variable)
+  beta_idx <- grep("^Beta\\[",       summary$variable)
+  sig_idx  <- grep("^sig_eta_gs\\[", summary$variable)
+  ell_idx  <- grep("^ell_gs\\[",     summary$variable)
+
+  summary$variable[z_idx]    <- paste0("Z[",          gene_names, "]")
+  summary$variable[beta_idx] <- paste0("Beta[",       gene_names, "]")
+  summary$variable[sig_idx]  <- paste0("sig_eta_gs[", gene_names, "]")
+  summary$variable[ell_idx]  <- paste0("ell_gs[",     gene_names, "]")
 
   draws_array <- fit$draws()
 
