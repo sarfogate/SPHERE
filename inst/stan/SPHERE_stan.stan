@@ -117,7 +117,7 @@ model {
     w[, j] ~ normal(0, 1);                                        // Prior on GP weights for gene j;  Standard normal prior on each of the r knot weights
   }
   sigma_beta ~ normal(mu_beta_sig, sd_beta_sig);        // Prior on CAR conditional SD;  Controls how dispersed gene effects are within pathways
-  rho ~ beta(shape_car_cor, rate_car_cor);                        // Prior on CAR autocorrelation parameter; Larger a_rho pushes rho toward 1 (stronger spatial smoothing)
+  rho ~ beta(shape_beta_rho, rate_beta_rho);                        // Prior on CAR autocorrelation parameter; Larger a_rho pushes rho toward 1 (stronger spatial smoothing)
 
 
   // ================================================
