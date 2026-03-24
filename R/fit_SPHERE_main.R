@@ -216,7 +216,7 @@ fit_sphere <- function(data_mat,  spot, gene_group, iter_sampling = 2000, iter_w
     # CAR precision prior (half-normal)
     mu_beta_sig = mu_beta_sig, sd_beta_sig = sd_beta_sig,
     # intercept
-    mu_intercept = 0,  sd_intercept = 1,
+    mu_intercept = mu_intercept,  sd_intercept = sd_intercept,
     # Pathway structure
     G = G,                   # number of pathways
     gene_group = gene_grp,            # pathway membership per gene (integer vector)
