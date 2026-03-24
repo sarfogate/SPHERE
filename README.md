@@ -55,40 +55,15 @@ library(SPHERE)
 
 ---
 
-## Quick Start
-
-```r
-library(SPHERE)
-
-# Fit the SPHERE model
-result <- fit_sphere(
-  data_mat   = counts_matrix,   # n x p matrix of gene expression counts
-  spot       = coord_matrix,    # n x 2 matrix of spatial coordinates
-  gene_group = pathway_labels,  # vector of pathway membership per gene
-  chains     = 3,
-  iter_sampling = 2000,
-  iter_warmup   = 1000
-)
-
-# View posterior summary
-head(result$summary)
-
-# Posterior probability of each gene being spatially expressed
-z_summary <- result$summary[grep("^Z\\[", result$summary$variable), ]
-print(z_summary)
-```
-
----
-
 ## Model Description
 
 SPHERE models spatial transcriptomics count data using a hierarchical Bayesian framework:
 
 $$
 \begin{align}
-     Y_{j}(s_i)  &\sim \text{Poisson}(N_{j}(s_i) \lambda_{j}(s_i))\\
-     \log(\lambda_{j}(s_i)) &=\mu_0 + \delta_{ij} + \eta_{j}(s_i)\\
-     \delta_{ij} &= \beta_j + \epsilon_{ij}, \qquad \boldsymbol{\epsilon}_i=(\epsilon_{i1},...,\epsilon_{ip}) \overset{\text{iid}}{\sim} \mathcal{N}\Big(0,\text{diag}\big( \sigma_1^2,...,\sigma_p^2)\Big)\\
+     Y_{j}(s_i)  \sim \text{Poisson}(N_{j}(s_i) \lambda_{j}(s_i))\\
+     \log(\lambda_{j}(s_i)) =\mu_0 + \delta_{ij} + \eta_{j}(s_i)\\
+     \delta_{ij} = \beta_j + \epsilon_{ij}, \qquad \boldsymbol{\epsilon}_i=(\epsilon_{i1},...,\epsilon_{ip}) \overset{\text{iid}}{\sim} \mathcal{N}\Big(0,\text{diag}\big( \sigma_1^2,...,\sigma_p^2)\Big)\\
 \end{align}
 $$
 
@@ -104,7 +79,7 @@ Where:
 - $Y_{ij}$ is the count for gene `j` at spot `i`
 - $N_{i}$ is the library size at spot `i`
 - $\eta_{j}(s_{i})$ captures the spatial expression pattern for gene `j`
-- $\beta_j$ is the gene-level effect informed by pathway membership
+- $\beta_j$ is the gene-specific network or pathway effect
 - $Z_j = 2$ indicates gene `j` is spatially expressed
 
 
