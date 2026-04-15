@@ -10,6 +10,8 @@ fit_sphere(
   gene_group,
   iter_sampling = 2000,
   iter_warmup = 1000,
+  N_i = NULL,
+  inits = NULL,
   stan_model_path = system.file("stan", "SPHERE_stan.stan", package = "SPHERE"),
   chains = 3,
   seed = 8,
@@ -46,6 +48,14 @@ chain (default: 2000).}
 
 \item{iter_warmup}{Integer. Number of warmup (burn-in) iterations per chain
 (default: 1000).}
+
+\item{N_i}{A numeric vector of length \eqn{n} giving the library size
+(sequencing depth) for each spot. If NULL, defaults to the row sums
+of \code{data_mat} (default: NULL).}
+
+\item{inits}{A function returning a named list of initial values for the
+MCMC sampler, or NULL to use the default data-driven initialization
+(default: NULL).}
 
 \item{stan_model_path}{Character string. Path to the compiled Stan model
 file (\code{.stan}). Defaults to the model bundled with the package.}
@@ -88,17 +98,17 @@ log-expression intercept mu0 (default: 0).}
 \item{sd_intercept}{Numeric. Scale of the normal prior on the global
 log-expression intercept mu0 (default: 1).}
 
-\item{shape_beta_rho}{Numeric. First shape parameter of the Beta
-prior on the CAR spatial correlation \eqn{a_{\rho_\beta}} (default: 2).}
+\item{shape_beta_rho}{Numeric. First shape parameter of the Beta prior on
+the CAR spatial correlation (default: 5).}
 
-\item{rate_beta_rho}{Numeric. Second shape parameter of the Beta
-prior on the CAR spatial correlation \eqn{b_{\rho_\beta}} (default: 2).}
+\item{rate_beta_rho}{Numeric. Second shape parameter of the Beta prior on
+the CAR spatial correlation (default: 2).}
 
 \item{mu_beta_sig}{Numeric. Mean of the half-normal prior on the CAR
-precision parameter \eqn{\mu_{\sigma_\beta}} (default: 1).}
+precision parameter (default: 1).}
 
 \item{sd_beta_sig}{Numeric. Scale of the half-normal prior on the CAR
-precision parameter \eqn{\Sigma{\sigma_\beta}} (default: 1).}
+precision parameter (default: 1).}
 }
 \value{
 A named list with the following elements:
@@ -139,6 +149,14 @@ is incorporated via a CAR prior on gene-level effects \eqn{\beta_j}.
 
 The posterior probability of spatial variability for gene \eqn{j} is
 estimated as the fraction of posterior samples where \eqn{Z_j = 2}.
+
+If \code{N_i} is provided, it overrides the default row-sum normalization.
+This is useful when library sizes have been pre-computed or adjusted
+externally (e.g. after normalization pipelines).
+
+If \code{inits} is provided, it must be a function with no arguments that
+returns a named list matching the Stan parameter block. If NULL, a
+data-driven initialization is used automatically.
 }
 \examples{
 \dontrun{
@@ -146,12 +164,28 @@ result <- fit_sphere(
   data_mat   = counts_matrix,
   spot       = coord_matrix,
   gene_group = pathway_labels,
-  knots      = 50,
-  chains     = 4,
-  sd_gp_lengthscale  = 5,
-  sd_gp_amplitude    = 10,
-  shape_beta_rho = 0,
-  rate_beta_rho  = 2
+  chains     = 3,
+  iter_sampling = 2000,
+  iter_warmup   = 1000
+)
+
+# Using custom library sizes
+result <- fit_sphere(
+  data_mat   = counts_matrix,
+  spot       = coord_matrix,
+  gene_group = pathway_labels,
+  N_i        = my_library_sizes
+)
+
+# Using custom initial values
+my_inits <- function() {
+  list(mu0 = 0, sigma_beta = 0.5, rho = 0.8)
+}
+result <- fit_sphere(
+  data_mat   = counts_matrix,
+  spot       = coord_matrix,
+  gene_group = pathway_labels,
+  inits      = my_inits
 )
 
 # Posterior probability of each gene being spatially expressed

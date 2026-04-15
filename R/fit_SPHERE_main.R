@@ -15,6 +15,12 @@
 #'   each spot (typically \eqn{d = 2} for x-y coordinates).
 #' @param gene_group A character or factor vector of length \eqn{p} giving the
 #'   pathway (group) membership for each gene.
+#' @param N_i A numeric vector of length \eqn{n} giving the library size
+#'   (sequencing depth) for each spot. If NULL, defaults to the row sums
+#'   of \code{data_mat} (default: NULL).
+#' @param inits A function returning a named list of initial values for the
+#'   MCMC sampler, or NULL to use the default data-driven initialization
+#'   (default: NULL).
 #' @param stan_model_path Character string. Path to the compiled Stan model
 #'   file (\code{.stan}). Defaults to the model bundled with the package.
 #' @param iter_sampling Integer. Number of post-warmup sampling iterations per
@@ -30,36 +36,30 @@
 #'   corresponds to the non-spatially-variable component.
 #' @param refresh Integer. Print progress every \code{refresh} iterations
 #'   (default: 100). Set to 0 to suppress output.
-#'
 #' @param mu_noise Numeric. Mean of the half-normal prior on observation noise
 #'   standard deviation (default: 0).
 #' @param sd_noise Numeric. Scale of the half-normal prior on observation noise
 #'   standard deviation (default: 1).
-#'
 #' @param mu_intercept Numeric. Mean of the normal prior on the global
 #'   log-expression intercept mu0 (default: 0).
 #' @param sd_intercept Numeric. Scale of the normal prior on the global
 #'   log-expression intercept mu0 (default: 1).
-#'
 #' @param mu_gp_lengthscale Numeric. Mean of the log-normal prior on the GP
 #'   lengthscale (default: 0).
 #' @param sd_gp_lengthscale Numeric. Scale of the log-normal prior on the GP
 #'   lengthscale (default: 3).
-#'
 #' @param mu_gp_amplitude Numeric. Mean of the half-normal prior on the GP
 #'   signal amplitude (default: 0).
 #' @param sd_gp_amplitude Numeric. Scale of the half-normal prior on the GP
 #'   signal amplitude (default: 12).
-#'
-#' @param shape_beta_rho Numeric. First shape parameter of the Beta
-#'   prior on the CAR spatial correlation \eqn{a_{\rho_\beta}} (default: 2).
-#' @param rate_beta_rho Numeric. Second shape parameter of the Beta
-#'   prior on the CAR spatial correlation \eqn{b_{\rho_\beta}} (default: 2).
-#'
+#' @param shape_beta_rho Numeric. First shape parameter of the Beta prior on
+#'   the CAR spatial correlation (default: 5).
+#' @param rate_beta_rho Numeric. Second shape parameter of the Beta prior on
+#'   the CAR spatial correlation (default: 2).
 #' @param mu_beta_sig Numeric. Mean of the half-normal prior on the CAR
-#'   precision parameter \eqn{\mu_{\sigma_\beta}} (default: 1).
+#'   precision parameter (default: 1).
 #' @param sd_beta_sig Numeric. Scale of the half-normal prior on the CAR
-#'   precision parameter \eqn{\Sigma{\sigma_\beta}} (default: 1).
+#'   precision parameter (default: 1).
 #'
 #' @return A named list with the following elements:
 #' \describe{
@@ -93,6 +93,14 @@
 #' The posterior probability of spatial variability for gene \eqn{j} is
 #' estimated as the fraction of posterior samples where \eqn{Z_j = 2}.
 #'
+#' If \code{N_i} is provided, it overrides the default row-sum normalization.
+#' This is useful when library sizes have been pre-computed or adjusted
+#' externally (e.g. after normalization pipelines).
+#'
+#' If \code{inits} is provided, it must be a function with no arguments that
+#' returns a named list matching the Stan parameter block. If NULL, a
+#' data-driven initialization is used automatically.
+#'
 #' @seealso \code{make_rbf_basis}, \code{make_rbf_dist}
 #'
 #' @examples
@@ -101,12 +109,28 @@
 #'   data_mat   = counts_matrix,
 #'   spot       = coord_matrix,
 #'   gene_group = pathway_labels,
-#'   knots      = 50,
-#'   chains     = 4,
-#'   sd_gp_lengthscale  = 5,
-#'   sd_gp_amplitude    = 10,
-#'   shape_beta_rho = 0,
-#'   rate_beta_rho  = 2
+#'   chains     = 3,
+#'   iter_sampling = 2000,
+#'   iter_warmup   = 1000
+#' )
+#'
+#' # Using custom library sizes
+#' result <- fit_sphere(
+#'   data_mat   = counts_matrix,
+#'   spot       = coord_matrix,
+#'   gene_group = pathway_labels,
+#'   N_i        = my_library_sizes
+#' )
+#'
+#' # Using custom initial values
+#' my_inits <- function() {
+#'   list(mu0 = 0, sigma_beta = 0.5, rho = 0.8)
+#' }
+#' result <- fit_sphere(
+#'   data_mat   = counts_matrix,
+#'   spot       = coord_matrix,
+#'   gene_group = pathway_labels,
+#'   inits      = my_inits
 #' )
 #'
 #' # Posterior probability of each gene being spatially expressed
@@ -122,7 +146,7 @@
 
 ## =============================================================================================
 
-fit_sphere <- function(data_mat,  spot, gene_group, iter_sampling = 2000, iter_warmup = 1000,
+fit_sphere <- function(data_mat,  spot, gene_group, iter_sampling = 2000, iter_warmup = 1000, N_i = NULL, inits = NULL,
                        stan_model_path = system.file("stan", "SPHERE_stan.stan", package = "SPHERE"),
                        chains  = 3,  seed  = 8, knots  = 30, alpha  = c(10, 3), refresh = 100,
                        mu_noise = 0, sd_noise = 1, mu_gp_lengthscale = 0, sd_gp_lengthscale = 3,
@@ -176,7 +200,20 @@ fit_sphere <- function(data_mat,  spot, gene_group, iter_sampling = 2000, iter_w
   # ------------------------------------------------------------------
   # 3. Normalization and spatial distances
   # ------------------------------------------------------------------
-  N_i <- rowSums(data_mat)
+  if (is.null(N_i)) {
+    N_i <- rowSums(data_mat)
+    message("N_i not provided. Using row sums of data_mat as library sizes.")
+  } else {
+    N_i <- as.numeric(N_i)
+    if (length(N_i) != n) {
+      stop("`N_i` must have length equal to the number of spots (",
+           n, "), but has length ", length(N_i), ".", call. = FALSE)
+    }
+    if (any(N_i <= 0)) {
+      stop("`N_i` must contain positive values.", call. = FALSE)
+    }
+    message("Using user-supplied N_i as library sizes.")
+  }
 
   if (any(N_i == 0)) {
     stop("Some spots have zero total counts. Remove empty spots before ",
@@ -231,28 +268,33 @@ fit_sphere <- function(data_mat,  spot, gene_group, iter_sampling = 2000, iter_w
   # ------------------------------------------------------------------
   # subtract log(N_i) to get the rate on the correct scale.
   Y_safe    <- pmax(data_mat, 0.5)
-  log_rates <- log(Y_safe) - log(N_i)        # n x p matrix of log-rates
-  mu0_init  <- median(log_rates)             # robust global intercept
-  resid_init <- log_rates - mu0_init         # gene-level deviations
-  beta_init  <- colMeans(resid_init)         # per-gene mean residual
-  ll_init    <- sweep(log_rates, 2,
-                      beta_init)             # initial loglambda
-  med_dist   <- median(sqrt(D))             # typical spot-knot distance
+  log_rates <- log(Y_safe) - log(N_i)           # n x p matrix of log-rates
+  mu0_init  <- median(log_rates)                # robust global intercept
+  resid_init <- log_rates - mu0_init            # gene-level deviations
+  beta_init  <- colMeans(resid_init)            # per-gene mean residual
+  ll_init    <- sweep(log_rates, 2, beta_init)  # initial loglambda
+  med_dist   <- median(sqrt(D))                 # typical spot-knot distance
 
-  init_fun <- function() {
-    list(
-      mu0        = mu0_init,
-      pii        = replicate(p, as.numeric(gtools::rdirichlet(1, c(8, 2))),
-                             simplify = FALSE),
-      loglambda  = ll_init,
-      sigma_sd   = pmax(apply(log_rates, 2, sd), 0.1),
-      sig_eta_gs = rep(0.3, p),
-      ell_gs     = rep(med_dist, p),
-      w          = matrix(rnorm(r * p, 0, 0.2), nrow = r, ncol = p),
-      Beta       = beta_init,
-      sigma_beta = 0.5,
-      rho        = runif(1, 0.7, 0.95)
-    )
+  if (is.null(inits)) {
+    # Default data-driven initialization
+    init_fun <- function() {
+      list(
+        mu0        = mu0_init,
+        pii        = replicate(p, as.numeric(gtools::rdirichlet(1, c(8, 2))),
+                               simplify = FALSE),
+        loglambda  = ll_init,
+        sigma_sd   = pmax(apply(log_rates, 2, sd), 0.1),
+        sig_eta_gs = rep(0.3, p),
+        ell_gs     = rep(med_dist, p),
+        w          = matrix(rnorm(r * p, 0, 0.2), nrow = r, ncol = p),
+        Beta       = beta_init,
+        sigma_beta = 0.5,
+        rho        = runif(1, 0.7, 0.95)
+      )
+    }
+  } else {
+    # Use user-supplied initialization function
+    init_fun <- inits
   }
 
   # ------------------------------------------------------------------
