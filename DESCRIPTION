@@ -29,6 +29,5 @@ Imports:
     ggplot2,
     gridExtra,
     gtools,
-    posterior,
-    stats
+    posterior
 Additional_repositories: https://stan-dev.r-universe.dev
